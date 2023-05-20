@@ -170,40 +170,40 @@ test "128-bit keys" {
             .cipher = "264E5481EFF42A4606ABDA06C0BFDA3D",
         },
         // Set 2, vector#  8:
-        TestVector {
+        TestVector{
             .key = "00000000000000000000000000000000",
             .plain = "00800000000000000000000000000000",
             .cipher = "0DB0D17349C89E090C845CBEF963F225",
         },
         // Set 2, vector# 28:
-        TestVector {
+        TestVector{
             .key = "00000000000000000000000000000000",
             .plain = "00000008000000000000000000000000",
             .cipher = "41ED367E96E013C651AF3FAEA764FE40",
         },
         // Set 3, vector# 46:
-        TestVector {
+        TestVector{
             .key = "2E2E2E2E2E2E2E2E2E2E2E2E2E2E2E2E",
             .plain = "2E2E2E2E2E2E2E2E2E2E2E2E2E2E2E2E",
             .cipher = "E605C2EF7EFFDAC2316796EB7C15FAC7",
         },
         // Set 5, vector# 34:
-        TestVector {
+        TestVector{
             .key = "00000000200000000000000000000000",
             .plain = "1B2A09A8CB69ECBAD8ACD593D27BCBDB",
             .cipher = "00000000000000000000000000000000",
         },
         // Set 7, vector# 35:
-        TestVector {
+        TestVector{
             .key = "23232323232323232323232323232323",
             .plain = "0F66477951B1C27FBFFFA41E1B4E4764",
             .cipher = "23232323232323232323232323232323",
         },
-        TestVector {
+        TestVector{
             .key = "000102030405060708090A0B0C0D0E0F",
             .plain = "33B3DC87EDDD9B0F6A1F407D14919365",
             .cipher = "00112233445566778899AABBCCDDEEFF",
-        }
+        },
     };
 
     for (test_vectors) |vector| {
