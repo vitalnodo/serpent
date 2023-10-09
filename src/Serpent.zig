@@ -9,56 +9,11 @@ const writeIntLittle = std.mem.writeIntLittle;
 const readIntLittle = std.mem.readIntLittle;
 const sBox = @import("sboxes.zig").sBox;
 const sBoxInv = @import("sboxes.zig").sBoxInv;
+const PHI: u32 = 0x9E3779B9;
+const Block = [4]u32;
+const RoundKeys = [132]u32;
 
 pub const Serpent = struct {
-    const PHI: u32 = 0x9E3779B9;
-    const Block = [4]u32;
-    const RoundKeys = [132]u32;
-
-    pub fn expandKey(key: []const u8) RoundKeys {
-        var k = [_]u32{0} ** 32;
-        var i: usize = 0;
-        while (i <= key.len - 4) : (i += 4) {
-            k[i / 4] = @as(u32, key[i]);
-            k[i / 4] |= @as(u32, key[i + 1]) << 8;
-            k[i / 4] |= @as(u32, key[i + 2]) << 16;
-            k[i / 4] |= @as(u32, key[i + 3]) << 24;
-        }
-        if (i / 4 < 16) {
-            k[i / 4] = 1;
-        }
-
-        var s = [_]u32{0} ** 132;
-        i = 8;
-        while (i < 16) : (i += 1) {
-            var x: u32 = k[i - 8] ^ k[i - 5] ^ k[i - 3] ^ k[i - 1] ^ PHI ^ @as(u32, @intCast(i - 8));
-            k[i] = rotl(u32, x, 11);
-            s[i - 8] = k[i];
-        }
-
-        i = 8;
-        while (i < 132) : (i += 1) {
-            var x: u32 = s[i - 8] ^ s[i - 5] ^ s[i - 3] ^ s[i - 1] ^ PHI ^ @as(u32, @intCast(i));
-            s[i] = rotl(u32, x, 11);
-        }
-        return s;
-    }
-
-    pub fn keySchedule(expanded_key: RoundKeys) RoundKeys {
-        var res = expanded_key;
-        var i: usize = 0;
-        var j: usize = 3;
-        while (i < 132) : (i += 4) {
-            var x = sBox[j](expanded_key[i .. i + 4][0..4].*);
-            res[i] = x[0];
-            res[i + 1] = x[1];
-            res[i + 2] = x[2];
-            res[i + 3] = x[3];
-            j = (j + 7) % 8;
-        }
-        return res;
-    }
-
     fn linearTransform(block: Block) Block {
         var w0 = block[0];
         var w1 = block[1];
@@ -155,6 +110,48 @@ pub const Serpent = struct {
     }
 };
 
+fn keySchedule(key: []const u8) RoundKeys {
+    var res = blk: {
+        var k = [_]u32{0} ** 32;
+        var i: usize = 0;
+        while (i <= key.len - 4) : (i += 4) {
+            k[i / 4] = @as(u32, key[i]);
+            k[i / 4] |= @as(u32, key[i + 1]) << 8;
+            k[i / 4] |= @as(u32, key[i + 2]) << 16;
+            k[i / 4] |= @as(u32, key[i + 3]) << 24;
+        }
+        if (i / 4 < 16) {
+            k[i / 4] = 1;
+        }
+
+        var s = [_]u32{0} ** 132;
+        i = 8;
+        while (i < 16) : (i += 1) {
+            var x: u32 = k[i - 8] ^ k[i - 5] ^ k[i - 3] ^ k[i - 1] ^ PHI ^ @as(u32, @intCast(i - 8));
+            k[i] = rotl(u32, x, 11);
+            s[i - 8] = k[i];
+        }
+
+        i = 8;
+        while (i < 132) : (i += 1) {
+            var x: u32 = s[i - 8] ^ s[i - 5] ^ s[i - 3] ^ s[i - 1] ^ PHI ^ @as(u32, @intCast(i));
+            s[i] = rotl(u32, x, 11);
+        }
+        break :blk s;
+    };
+    var i: usize = 0;
+    var j: usize = 3;
+    while (i < 132) : (i += 4) {
+        var x = sBox[j](res[i .. i + 4][0..4].*);
+        res[i] = x[0];
+        res[i + 1] = x[1];
+        res[i + 2] = x[2];
+        res[i + 3] = x[3];
+        j = (j + 7) % 8;
+    }
+    return res;
+}
+
 // Nessie test vectors are standard,  the vectors on the floppy disks
 // that were sent to the AES contest have the bytes in reverse order
 // and this is called tnepres sometimes
@@ -214,7 +211,7 @@ test "128-bit keys" {
         var v_cipher: [16]u8 = undefined;
         _ = try hexToBytes(&v_cipher, vector.cipher);
 
-        const round_keys = Serpent.keySchedule(Serpent.expandKey(&v_key));
+        const round_keys = keySchedule(&v_key);
         const cipher_res = Serpent.blockToBytes(
             Serpent.encryptBlock(
                 Serpent.blockFromBytes(v_plain),
@@ -257,7 +254,7 @@ test "256-bit keys" {
         var v_cipher: [16]u8 = undefined;
         _ = try hexToBytes(&v_cipher, vector.cipher);
 
-        const round_keys = Serpent.keySchedule(Serpent.expandKey(&v_key));
+        const round_keys = keySchedule(&v_key);
         const cipher_res = Serpent.blockToBytes(
             Serpent.encryptBlock(
                 Serpent.blockFromBytes(v_plain),
