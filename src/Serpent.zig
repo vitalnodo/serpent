@@ -31,14 +31,14 @@ pub const Serpent = struct {
         var s = [_]u32{0} ** 132;
         i = 8;
         while (i < 16) : (i += 1) {
-            var x: u32 = k[i - 8] ^ k[i - 5] ^ k[i - 3] ^ k[i - 1] ^ PHI ^ @intCast(u32, i - 8);
+            var x: u32 = k[i - 8] ^ k[i - 5] ^ k[i - 3] ^ k[i - 1] ^ PHI ^ @as(u32, @intCast(i - 8));
             k[i] = rotl(u32, x, 11);
             s[i - 8] = k[i];
         }
 
         i = 8;
         while (i < 132) : (i += 1) {
-            var x: u32 = s[i - 8] ^ s[i - 5] ^ s[i - 3] ^ s[i - 1] ^ PHI ^ @intCast(u32, i);
+            var x: u32 = s[i - 8] ^ s[i - 5] ^ s[i - 3] ^ s[i - 1] ^ PHI ^ @as(u32, @intCast(i));
             s[i] = rotl(u32, x, 11);
         }
         return s;
