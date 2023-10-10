@@ -1,4 +1,5 @@
 const std = @import("std");
+const mem = std.mem;
 const testing = std.testing;
 const rotl = std.math.rotl;
 const rotr = std.math.rotr;
@@ -10,15 +11,57 @@ const readIntLittle = std.mem.readIntLittle;
 const sBox = @import("sboxes.zig").sBox;
 const sBoxInv = @import("sboxes.zig").sBoxInv;
 const PHI: u32 = 0x9E3779B9;
-const Block = [4]u32;
+const BlockVec = [4]u32;
 const RoundKeys = [132]u32;
 
-pub const Serpent = struct {
-    fn linearTransform(block: Block) Block {
-        var w0 = block[0];
-        var w1 = block[1];
-        var w2 = block[2];
-        var w3 = block[3];
+pub const Block = struct {
+    pub const block_length = 16;
+    repr: BlockVec align(16),
+
+    /// Convert a byte sequence into an internal representation.
+    pub inline fn fromBytes(bytes: *const [16]u8) Block {
+        const s0 = mem.readIntLittle(u32, bytes[0..4]);
+        const s1 = mem.readIntLittle(u32, bytes[4..8]);
+        const s2 = mem.readIntLittle(u32, bytes[8..12]);
+        const s3 = mem.readIntLittle(u32, bytes[12..16]);
+        return Block{ .repr = BlockVec{ s0, s1, s2, s3 } };
+    }
+
+    /// Convert the internal representation of a block into a byte sequence.
+    pub inline fn toBytes(block: Block) [16]u8 {
+        var bytes: [16]u8 = undefined;
+        mem.writeIntLittle(u32, bytes[0..4], block.repr[0]);
+        mem.writeIntLittle(u32, bytes[4..8], block.repr[1]);
+        mem.writeIntLittle(u32, bytes[8..12], block.repr[2]);
+        mem.writeIntLittle(u32, bytes[12..16], block.repr[3]);
+        return bytes;
+    }
+
+    /// XOR the block with a byte sequence.
+    pub inline fn xorBytes(block: Block, bytes: *const [16]u8) [16]u8 {
+        const block_bytes = block.toBytes();
+        var x: [16]u8 = undefined;
+        comptime var i: usize = 0;
+        inline while (i < 16) : (i += 1) {
+            x[i] = block_bytes[i] ^ bytes[i];
+        }
+        return x;
+    }
+
+    pub inline fn xor(a: Block, b: Block) Block {
+        return .{ .repr = .{
+            a.repr[0] ^ b.repr[0],
+            a.repr[1] ^ b.repr[1],
+            a.repr[2] ^ b.repr[2],
+            a.repr[3] ^ b.repr[3],
+        } };
+    }
+
+    pub fn linearTransform(block: Block) Block {
+        var w0 = block.repr[0];
+        var w1 = block.repr[1];
+        var w2 = block.repr[2];
+        var w3 = block.repr[3];
         w0 = rotl(u32, w0, 13);
         w2 = rotl(u32, w2, 3);
         w1 ^= w0 ^ w2;
@@ -29,14 +72,14 @@ pub const Serpent = struct {
         w2 ^= w3 ^ (w1 << 7);
         w0 = rotl(u32, w0, 5);
         w2 = rotl(u32, w2, 22);
-        return [4]u32{ w0, w1, w2, w3 };
+        return Block{ .repr = BlockVec{ w0, w1, w2, w3 } };
     }
 
-    fn inverseLinearTransform(block: Block) Block {
-        var w0 = block[0];
-        var w1 = block[1];
-        var w2 = block[2];
-        var w3 = block[3];
+    pub fn inverseLinearTransform(block: Block) Block {
+        var w0 = block.repr[0];
+        var w1 = block.repr[1];
+        var w2 = block.repr[2];
+        var w3 = block.repr[3];
         w2 = rotr(u32, w2, 22);
         w0 = rotr(u32, w0, 5);
         w2 ^= w3 ^ (w1 << 7);
@@ -47,67 +90,91 @@ pub const Serpent = struct {
         w1 ^= w0 ^ w2;
         w2 = rotr(u32, w2, 3);
         w0 = rotr(u32, w0, 13);
-        return [4]u32{ w0, w1, w2, w3 };
+        return Block{ .repr = BlockVec{ w0, w1, w2, w3 } };
     }
+};
 
-    fn xor(block: Block, key: Block) Block {
-        return [4]u32{
-            block[0] ^ key[0],
-            block[1] ^ key[1],
-            block[2] ^ key[2],
-            block[3] ^ key[3],
-        };
-    }
+pub fn SerpentEncryptCtx(comptime Serpent_: type) type {
+    return struct {
+        const Self = @This();
+        pub const block = Serpent_.block;
+        pub const block_length = block.block_length;
+        round_keys: RoundKeys,
 
-    pub fn encryptBlock(block: Block, round_keys: RoundKeys) Block {
-        var b: Block = block;
-        var i: usize = 0;
-        while (i <= 30 * 4) {
-            b = xor(b, round_keys[i .. i + 4][0..4].*);
-            b = sBox[(i / 4) % 8](b);
-            b = linearTransform(b);
-            i += 4;
+        pub fn init(key: []const u8) Self {
+            return .{ .round_keys = keySchedule(key) };
         }
-        b = xor(b, round_keys[4 * 31 .. 4 * 31 + 4][0..4].*);
-        b = sBox[7](b);
-        b = xor(b, round_keys[4 * 32 .. 4 * 32 + 4][0..4].*);
-        return b;
-    }
 
-    pub fn decryptBlock(block: Block, round_keys: RoundKeys) Block {
-        var b: Block = block;
-        b = xor(b, round_keys[4 * 32 .. 4 * 32 + 4][0..4].*);
-        b = sBoxInv[7](b);
-        b = xor(b, round_keys[4 * 31 .. 4 * 31 + 4][0..4].*);
-        var i: usize = 30 * 4;
-        while (i >= 4) : (i -= 4) {
-            b = inverseLinearTransform(b);
-            b = sBoxInv[(i / 4) % 8](b);
-            b = xor(b, round_keys[i .. i + 4][0..4].*);
+        pub fn encrypt(ctx: Self, dst: *[16]u8, src: *const [16]u8) void {
+            var b: Block = Block.fromBytes(src);
+            var i: usize = 0;
+            while (i <= 30 * 4) {
+                const round_key = Block{ .repr = ctx.round_keys[i .. i + 4][0..4].* };
+                b = b.xor(round_key);
+                b = Block{ .repr = sBox[(i / 4) % 8](b.repr) };
+                b = b.linearTransform();
+                i += 4;
+            }
+            b = b.xor(
+                Block{ .repr = ctx.round_keys[4 * 31 .. 4 * 31 + 4][0..4].* },
+            );
+            b = Block{ .repr = sBox[7](b.repr) };
+            b = b.xor(
+                Block{ .repr = ctx.round_keys[4 * 32 .. 4 * 32 + 4][0..4].* },
+            );
+            dst.* = b.toBytes();
         }
-        b = inverseLinearTransform(b);
-        b = sBoxInv[0](b);
-        b = xor(b, round_keys[0..4][0..4].*);
-        return b;
-    }
+    };
+}
 
-    pub fn blockFromBytes(bytes: [16]u8) Block {
-        var block = Block{ 0, 0, 0, 0 };
-        block[0] = readIntLittle(u32, bytes[0..4]);
-        block[1] = readIntLittle(u32, bytes[4..8]);
-        block[2] = readIntLittle(u32, bytes[8..12]);
-        block[3] = readIntLittle(u32, bytes[12..16]);
-        return block;
-    }
+pub fn SerpentDecryptCtx(comptime Serpent_: type) type {
+    return struct {
+        const Self = @This();
+        pub const block = Serpent_.block;
+        pub const block_length = block.block_length;
+        round_keys: RoundKeys,
 
-    pub fn blockToBytes(block: Block) [16]u8 {
-        var bytes: [16]u8 = undefined;
-        writeIntLittle(u32, bytes[0..4], block[0]);
-        writeIntLittle(u32, bytes[4..8], block[1]);
-        writeIntLittle(u32, bytes[8..12], block[2]);
-        writeIntLittle(u32, bytes[12..16], block[3]);
-        return bytes;
-    }
+        pub fn init(key: []const u8) Self {
+            return .{ .round_keys = keySchedule(key) };
+        }
+
+        pub fn decrypt(ctx: Self, dst: *[16]u8, src: *const [16]u8) void {
+            var b: Block = Block.fromBytes(src);
+            b = b.xor(
+                Block{ .repr = ctx.round_keys[4 * 32 .. 4 * 32 + 4][0..4].* },
+            );
+            b = Block{ .repr = sBoxInv[7](b.repr) };
+            b = b.xor(
+                Block{ .repr = ctx.round_keys[4 * 31 .. 4 * 31 + 4][0..4].* },
+            );
+            var i: usize = 30 * 4;
+            while (i >= 4) : (i -= 4) {
+                b = b.inverseLinearTransform();
+                b = Block{ .repr = sBoxInv[(i / 4) % 8](b.repr) };
+                b = b.xor(
+                    Block{ .repr = ctx.round_keys[i .. i + 4][0..4].* },
+                );
+            }
+            b = b.inverseLinearTransform();
+            b = Block{ .repr = sBoxInv[0](b.repr) };
+            b = b.xor(
+                Block{ .repr = ctx.round_keys[0..4][0..4].* },
+            );
+            dst.* = b.toBytes();
+        }
+    };
+}
+
+pub const Serpent128 = struct {
+    pub const key_bits = 128;
+    pub const rounds = 32;
+    pub const block = Block;
+};
+
+pub const Serpent256 = struct {
+    pub const key_bits = 256;
+    pub const rounds = 32;
+    pub const block = Block;
 };
 
 fn keySchedule(key: []const u8) RoundKeys {
@@ -211,23 +278,15 @@ test "128-bit keys" {
         var v_cipher: [16]u8 = undefined;
         _ = try hexToBytes(&v_cipher, vector.cipher);
 
-        const round_keys = keySchedule(&v_key);
-        const cipher_res = Serpent.blockToBytes(
-            Serpent.encryptBlock(
-                Serpent.blockFromBytes(v_plain),
-                round_keys,
-            ),
-        );
-        var cipher_res_hex: [32]u8 = undefined;
-        _ = try bufPrint(&cipher_res_hex, "{X}", .{fmtSliceHexUpper(&cipher_res)});
-        try testing.expectEqualStrings(vector.cipher, &cipher_res_hex);
+        const se = SerpentEncryptCtx(Serpent128).init(&v_key);
+        var cipher_res: [16]u8 = undefined;
+        se.encrypt(&cipher_res, &v_plain);
+        try testing.expectEqualSlices(u8, &v_cipher, &cipher_res);
 
-        var plain_res = Serpent.blockToBytes(
-            Serpent.decryptBlock(Serpent.blockFromBytes(v_cipher), round_keys),
-        );
-        var plain_res_hex: [32]u8 = undefined;
-        _ = try bufPrint(&plain_res_hex, "{X}", .{fmtSliceHexUpper(&plain_res)});
-        try testing.expectEqualStrings(vector.plain, &plain_res_hex);
+        const sd = SerpentDecryptCtx(Serpent128).init(&v_key);
+        var plain_res: [16]u8 = undefined;
+        sd.decrypt(&plain_res, &v_cipher);
+        try testing.expectEqualSlices(u8, &v_plain, &plain_res);
     }
 }
 
@@ -254,22 +313,14 @@ test "256-bit keys" {
         var v_cipher: [16]u8 = undefined;
         _ = try hexToBytes(&v_cipher, vector.cipher);
 
-        const round_keys = keySchedule(&v_key);
-        const cipher_res = Serpent.blockToBytes(
-            Serpent.encryptBlock(
-                Serpent.blockFromBytes(v_plain),
-                round_keys,
-            ),
-        );
-        var cipher_res_hex: [32]u8 = undefined;
-        _ = try bufPrint(&cipher_res_hex, "{X}", .{fmtSliceHexUpper(&cipher_res)});
-        try testing.expectEqualStrings(vector.cipher, &cipher_res_hex);
+        const se = SerpentEncryptCtx(Serpent256).init(&v_key);
+        var cipher_res: [16]u8 = undefined;
+        se.encrypt(&cipher_res, &v_plain);
+        try testing.expectEqualSlices(u8, &v_cipher, &cipher_res);
 
-        var plain_res = Serpent.blockToBytes(
-            Serpent.decryptBlock(Serpent.blockFromBytes(v_cipher), round_keys),
-        );
-        var plain_res_hex: [32]u8 = undefined;
-        _ = try bufPrint(&plain_res_hex, "{X}", .{fmtSliceHexUpper(&plain_res)});
-        try testing.expectEqualStrings(vector.plain, &plain_res_hex);
+        const sd = SerpentDecryptCtx(Serpent256).init(&v_key);
+        var plain_res: [16]u8 = undefined;
+        sd.decrypt(&plain_res, &v_cipher);
+        try testing.expectEqualSlices(u8, &v_plain, &plain_res);
     }
 }
