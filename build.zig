@@ -44,4 +44,8 @@ pub fn build(b: *std.Build) void {
     // This will evaluate the `test` step rather than the default, which is "install".
     const test_step = b.step("test", "Run library tests");
     test_step.dependOn(&run_main_tests.step);
+    const module = b.addModule("serpent", .{ .source_file = .{
+        .path = "serpent",
+    } });
+    _ = module;
 }
